@@ -1,13 +1,18 @@
 package advanced.chapter2;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.util.StatCounter;
+
+import scala.Tuple2;
 
 public class Linkage {
 	public static void main(String[] args) {
@@ -50,14 +55,39 @@ public class Linkage {
 		Map<Boolean, Long> matchCounts = parsed.map(md -> md.getMatched()).countByValue();
 		System.out.println(matchCounts.size());
 		
-		//查看scores的统计值
+		//查看scores的统计值，2.10中对应的代码
 		for (int i = 0; i < 9; i++) {
 			final Integer innerI = new Integer(i);
 			StatCounter statCounter = parsed.mapToDouble(md -> md.getScores()[innerI]).filter(score -> !Double.isNaN(score)).stats();
 			System.out.println(statCounter);
 		}
 		
-		JavaRDD<Object> nasRDD = parsed.map(md -> Arrays.asList(md.getScores()).stream().map(d -> new NAStatCounter()));
+		ststsWithMissing(parsed);
+		
+		List<NAStatCounter> ststsm = ststsWithMissing(parsed.filter(md -> md.getMatched()));
+		List<NAStatCounter> ststsn = ststsWithMissing(parsed.filter(md -> !md.getMatched()));
+		
+		List<Tuple2<NAStatCounter, NAStatCounter>> ststs = new ArrayList<Tuple2<NAStatCounter, NAStatCounter>>();
+		for (int i = 0; i < ststsm.size(); i++) {
+			ststs.add(new Tuple2<NAStatCounter, NAStatCounter>(ststsm.get(i), ststsn.get(i)));
+		}
+		System.out.println("评分：");
+		ststs.stream().forEach(p -> System.out.println((p._1.missing+p._2.missing)+","+(p._1.stats.mean()-p._2.stats.mean())));
+		
+		JavaRDD<Scored> ct = getCT(parsed);
+		
+		Map<Boolean, Long> ct0 = ct.filter(s -> s.score >= 4.0).map(s -> s.md.getMatched()).countByValue();
+		for (Entry<Boolean, Long> ctTmp : ct0.entrySet()) {
+			System.out.println("Key:" + ctTmp.getKey());
+			System.out.println("Value:" + ctTmp.getValue());
+		}
+		Map<Boolean, Long> ct1 = ct.filter(s -> s.score >= 2.0).map(s -> s.md.getMatched()).countByValue();
+		for (Entry<Boolean, Long> ctTmp : ct1.entrySet()) {
+			System.out.println("Key:" + ctTmp.getKey());
+			System.out.println("Value:" + ctTmp.getValue());
+		}
+		
+		
 		jsc.close();
 	}
 
@@ -82,12 +112,53 @@ public class Linkage {
 				scores[j] = Double.parseDouble(pieces[i]);
 			}
 		}
-		Boolean matched = Boolean.parseBoolean(pieces[1]);
+		Boolean matched = Boolean.parseBoolean(pieces[11]);
 		MatchData matchData = new MatchData();
 		matchData.setId1(id1);
 		matchData.setId2(id2);
 		matchData.setScores(scores);
 		matchData.setMatched(matched);
 		return matchData;
+	}
+	
+	/**
+	 * 
+	 * @Title: ststsWithMissing
+	 * @Description: 2.11 中对应的代码
+	 * @param: @param parsed    参数
+	 * @return 
+	 * @return: void    返回类型
+	 * @throws:
+	 */
+	public static List<NAStatCounter> ststsWithMissing(JavaRDD<MatchData> parsed){
+		JavaRDD<List<NAStatCounter>> nasRDD = parsed.map(md -> {
+			return Arrays.asList(md.getScores()).stream().map(d -> new NAStatCounter(d)).collect(Collectors.toList());
+		});
+		List<NAStatCounter> reduced = nasRDD.reduce((List<NAStatCounter> n1, List<NAStatCounter>n2) -> {
+			List<Tuple2<NAStatCounter, NAStatCounter>> n0 = new ArrayList<Tuple2<NAStatCounter, NAStatCounter>>();
+			for (int i = 0; i < n1.size(); i++) {
+				n0.add(new Tuple2<NAStatCounter, NAStatCounter>(n1.get(i), n2.get(i)));
+			}
+			return n0.stream().map(p -> p._1.merge(p._2)).collect(Collectors.toList());
+		});
+		reduced.forEach(System.out::println);
+		return reduced;
+	}
+	
+	public static JavaRDD<Scored> getCT(JavaRDD<MatchData> parsed){
+		JavaRDD<Scored> ct = parsed.map(md -> {
+			List<Double> scoreList = Arrays.asList(new Integer[]{2, 5, 6, 7, 8}).stream().map(i -> {
+				if(md.getScores()[i].equals(Double.NaN)){
+					return 0.0;
+				} else {
+					return md.getScores()[i];
+				}
+			}).collect(Collectors.toList());
+			Scored scored = new Scored();
+			scored.score = scoreList.stream().reduce((r, e) -> r = r + e ).get();
+			scored.md = md;
+			return scored;
+		});
+		return ct;
 	}
 }

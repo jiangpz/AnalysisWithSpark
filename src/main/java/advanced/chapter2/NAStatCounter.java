@@ -16,17 +16,19 @@ public class NAStatCounter implements Serializable{
 		this.add(x);
 	}
 	
-	public void add(Double x) {
+	public NAStatCounter add(Double x) {
 		if(Double.isNaN(x)) {
 			missing += 1;
 		} else {
 			stats.merge(x);
 		}
+		return this;
 	}
 	
-	public void merge(NAStatCounter other) {
+	public NAStatCounter merge(NAStatCounter other) {
 		stats.merge(other.stats);
 		missing += other.missing;
+		return this;
 	}
 
 	@Override
