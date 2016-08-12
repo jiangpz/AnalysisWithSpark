@@ -59,11 +59,20 @@ public class RecommendingMusic {
 		System.out.println("输出模型");
 		model.userFeatures().toJavaRDD().map(f -> f.toString()).first();
 		System.out.println("1");
-		model.userFeatures().toJavaRDD().foreach(f -> System.out.println(f._1.toString() + f._2.toString()));
+		model.userFeatures().toJavaRDD().foreach(f -> System.out.println(f._1.toString() + f._2[0] + f._2.toString()));
 		
-		JavaRDD<String[]> rawArtistsForUser = rawUserArtistData.map(x -> x.split(" ")).filter(f -> Integer.parseInt(f[0]) == 2093760 );
+		//逐个检查推荐结果
+		JavaRDD<String[]> rawArtistsForUser = rawUserArtistData.map(x -> x.split(" ")).filter(f -> Integer.parseInt(f[0]) == 1000029 );
 		List<Integer> existingProducts = rawArtistsForUser.map(f -> Integer.parseInt(f[1])).collect();
 		artistByID.filter(f -> existingProducts.contains(f._1)).values().collect().forEach(System.out::println);
+		
+		//对id为1000029的用户做5个推荐
+		Rating[] recommendations = model.recommendProducts(1000029, 5);
+		Arrays.asList(recommendations).stream().forEach(System.out::println);
+		
+		 //查找推荐艺术家ID对应的名字
+		List<Integer> recommendedProductIDs = Arrays.asList(recommendations).stream().map(y -> y.product()).collect(Collectors.toList());
+		artistByID.filter(f -> recommendedProductIDs.contains(f._1)).values().collect().forEach(System.out::println);
 		
 		//关闭JavaSparkContext
 		jsc.close();
