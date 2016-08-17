@@ -1,7 +1,12 @@
 package advanced.chapter4;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
@@ -49,6 +54,14 @@ public class PredictingForestCoverWithDecisionTrees {
 		//每个类别相对其他类别的精确度
 		Arrays.asList(new Integer[]{0,1,2,3,4,5,6}).stream().forEach(cat -> System.out.println(metrics.precision(cat) + "," + metrics.recall(cat)));
 		
+		List<Double> trainPriorProbabilities = classProbabilities(trainData);
+		List<Double> cvPriorProbabilities = classProbabilities(cvData);
+		
+		//把训练集和CV集中的某个类别的概率结成对，相乘然后相加
+		List<Tuple2<Double, Double>> mergePriorProbabilities = new ArrayList<>();
+		Arrays.asList(new Integer[]{0,1,2,3,4,5,6}).stream().forEach(i -> mergePriorProbabilities.add(new Tuple2<Double, Double>(trainPriorProbabilities.get(i), cvPriorProbabilities.get(i))));
+		System.out.println(mergePriorProbabilities.stream().map(x -> x._1*x._2).reduce((r,e) -> r=r+e).get());
+		
 		jsc.close();
 	}
 
@@ -89,5 +102,19 @@ public class PredictingForestCoverWithDecisionTrees {
 		});
 		
 		return new MulticlassMetrics(JavaPairRDD.toRDD(predictionsAndLabels));
+	}
+	
+	public static List<Double> classProbabilities(JavaRDD<LabeledPoint> data) {
+		//计算数据中每个类的样本数：(类别，样本数)
+		Map<Double, Long> countsByCategory = data.map( x -> x.label()).countByValue();
+		
+		//排序
+		List<Map.Entry<Double, Long>> categoryList = new ArrayList<>(countsByCategory.entrySet());
+		Collections.sort(categoryList, (m1, m2) -> m1.getKey().intValue()-m2.getKey().intValue());
+		
+		//取出样本数
+		List<Long> counts = categoryList.stream().map(x -> x.getValue()).collect(Collectors.toList());
+		Double sum = counts.stream().reduce((r, e) -> r = r + e ).get().doubleValue();
+		return counts.stream().map(x -> x.doubleValue()/sum).collect(Collectors.toList());
 	}
 }
