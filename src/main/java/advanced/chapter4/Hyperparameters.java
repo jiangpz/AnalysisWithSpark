@@ -1,7 +1,6 @@
 package advanced.chapter4;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -20,8 +19,9 @@ import org.apache.spark.mllib.tree.DecisionTree;
 import org.apache.spark.mllib.tree.model.DecisionTreeModel;
 
 import scala.Tuple2;
+import scala.Tuple3;
 
-public class PredictingForestCoverWithDecisionTrees {
+public class Hyperparameters {
 
 	public static void main(String[] args) {
 		//初始化SparkConf
@@ -41,29 +41,27 @@ public class PredictingForestCoverWithDecisionTrees {
 		JavaRDD<LabeledPoint> testData = splitArray[2];
 		testData.cache();
 		
-		//构建DecisionTreeModel
-		DecisionTreeModel model = DecisionTree.trainClassifier(trainData, 7, new HashMap<Integer, Integer>(), "gini", 4, 100);
-		DecisionTreeModel modelR = DecisionTree.trainClassifier(trainData.union(cvData), 7, new HashMap<Integer, Integer>(), "entropy", 20, 300);
+		//决策树调优
+		List<Tuple2<Tuple3<String, Integer, Integer>, Double>> evaluations = new ArrayList<>();
 		
-		//用CV集来计算结果模型的指标
-		MulticlassMetrics metrics = getMetrics(model, cvData);
-		MulticlassMetrics metricsR = getMetrics(modelR, testData);
+		String[] impuritySet = new String[]{"gini", "entropy"};
+		Integer[] depthSet = new Integer[]{1, 20};
+		Integer[] binsSet = new Integer[]{10, 300};
+		for (String impurity : impuritySet) {
+			for (Integer depth : depthSet) {
+				for (Integer bins : binsSet) {
+					//构建DecisionTreeModel
+					DecisionTreeModel model = DecisionTree.trainClassifier(trainData, 7, new HashMap<Integer, Integer>(), impurity, depth, bins);
+					//用CV集来计算结果模型的指标
+					MulticlassMetrics metrics = getMetrics(model, cvData);
+					
+					evaluations.add(new Tuple2<Tuple3<String, Integer, Integer>, Double>(new Tuple3<String, Integer, Integer>(impurity, depth, bins), metrics.precision()));
+				}
+			}
+		}
 		
-		//查看混淆矩阵
-		System.out.println(metrics.confusionMatrix());
-		//查看准确度
-		System.out.println(metrics.precision());
-		System.out.println(metricsR.precision());
-		//每个类别相对其他类别的精确度
-		Arrays.asList(new Integer[]{0,1,2,3,4,5,6}).stream().forEach(cat -> System.out.println(metrics.precision(cat) + "," + metrics.recall(cat)));
-		
-		List<Double> trainPriorProbabilities = classProbabilities(trainData);
-		List<Double> cvPriorProbabilities = classProbabilities(cvData);
-		
-		//把训练集和CV集中的某个类别的概率结成对，相乘然后相加
-		List<Tuple2<Double, Double>> mergePriorProbabilities = new ArrayList<>();
-		Arrays.asList(new Integer[]{0,1,2,3,4,5,6}).stream().forEach(i -> mergePriorProbabilities.add(new Tuple2<Double, Double>(trainPriorProbabilities.get(i), cvPriorProbabilities.get(i))));
-		System.out.println(mergePriorProbabilities.stream().map(x -> x._1*x._2).reduce((r,e) -> r=r+e).get());
+		Collections.sort(evaluations, (m1, m2) -> (int)((m2._2-m1._2)*1000));
+		evaluations.forEach(x -> System.out.println(x._1._1() + "," + x._1._2() + "," + x._1._3() + "," + x._2));
 		
 		jsc.close();
 	}
