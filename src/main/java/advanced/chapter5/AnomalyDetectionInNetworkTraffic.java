@@ -3,11 +3,12 @@ package advanced.chapter5;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Map;
+import java.util.List;
 import java.util.Map.Entry;
-import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaDoubleRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.mllib.clustering.KMeans;
@@ -50,7 +51,6 @@ public class AnomalyDetectionInNetworkTraffic {
 			return new Tuple2<String, Vector>(label,vector);
 		});
 		
-		/*
 		RDD<Vector> data = JavaRDD.toRDD(labelsAndData.map(f -> f._2));
 		
 		//聚类
@@ -67,10 +67,33 @@ public class AnomalyDetectionInNetworkTraffic {
 		
 		Collections.sort(clusterLabelCount, (m1, m2) -> m2.getKey()._1-m1.getKey()._1);
 		clusterLabelCount.forEach(t -> System.out.println(t.getKey()._1 +"\t"+ t.getKey()._2 +"\t\t"+ t.getValue()));
-		*/
 		
 		//选择K
-		Arrays.asList(new Integer[]{1, 2, 3, 4, 5, 6, 7, 8}).stream().map(k -> clusteringScore(labelsAndData.map(f -> f._2), k*5)).forEach(System.out::println);;
+		List<Double> list = Arrays.asList(new Integer[]{1, 2, 3, 4, 5, 6, 7, 8}).stream().map(k -> clusteringScore(labelsAndData.map(f -> f._2), k*5)).collect(Collectors.toList());
+		list.forEach(System.out::println);
+		
+		KMeans kmeansF = new KMeans();
+		kmeansF.setK(150);
+		KMeansModel modelF = kmeansF.run(data);
+		
+		System.out.println("json:---------");
+		Arrays.asList(modelF.clusterCenters()).forEach(v -> System.out.println(v.toJson()));
+		
+		ArrayList<Entry<Tuple2<Integer, String>, Long>> clusterLabelCountF = new ArrayList<Entry<Tuple2<Integer, String>, Long>>(labelsAndData.map( v -> {
+			int cluster = modelF.predict(v._2);
+			return new Tuple2<Integer, String>(cluster, v._1);
+		}).countByValue().entrySet());
+		
+		Collections.sort(clusterLabelCountF, (m1, m2) -> m2.getKey()._1-m1.getKey()._1);
+		clusterLabelCountF.forEach(t -> System.out.println(t.getKey()._1 +"\t"+ t.getKey()._2 +"\t\t"+ t.getValue()));
+		
+		//距离中心最远的第100个点的距离
+		JavaDoubleRDD distances = labelsAndData.map(f -> f._2).mapToDouble(datum -> distToCentroid(datum, modelF));
+		Double threshold = distances.top(100).get(99);
+		
+		JavaRDD<Tuple2<String, Vector>> result = labelsAndData.filter(t -> distToCentroid(t._2, modelF) > threshold);
+		System.out.println("result:---------");
+		result.foreach(f -> System.out.println(f._2));
 		
 		jsc.close();
 		
