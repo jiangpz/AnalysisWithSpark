@@ -12,6 +12,8 @@
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<corenlp.version>3.4.1</corenlp.version>
+		<hadoop.version>2.6.4</hadoop.version>
 	</properties>
 
 	<dependencies>
@@ -32,6 +34,34 @@
 			<artifactId>spark-mllib_2.10</artifactId>
 			<version>1.6.1</version>
 		</dependency>
-
+		
+		<!-- ch06 jar start -->
+		<dependency>
+			<groupId>edu.stanford.nlp</groupId>
+			<artifactId>stanford-corenlp</artifactId>
+			<version>${corenlp.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>edu.stanford.nlp</groupId>
+			<artifactId>stanford-corenlp</artifactId>
+			<version>${corenlp.version}</version>
+			<classifier>models</classifier>
+		</dependency>
+		<dependency>
+			<groupId>edu.umd</groupId>
+			<artifactId>cloud9</artifactId>
+			<version>1.5.0</version>
+		</dependency>
+		<dependency>
+			<groupId>info.bliki.wiki</groupId>
+			<artifactId>bliki-core</artifactId>
+			<version>3.0.19</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.hadoop</groupId>
+			<artifactId>hadoop-client</artifactId>
+			<version>${hadoop.version}</version>
+		</dependency>
+		<!-- ch06 jar end -->
 	</dependencies>
 </project>
