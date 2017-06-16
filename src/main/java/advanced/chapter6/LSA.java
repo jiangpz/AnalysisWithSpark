@@ -21,6 +21,8 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import advanced.chapter6.entity.Lemmas;
+import advanced.chapter6.entity.Page;
 import edu.stanford.nlp.ling.CoreAnnotations.LemmaAnnotation;
 import edu.stanford.nlp.ling.CoreAnnotations.SentencesAnnotation;
 import edu.stanford.nlp.ling.CoreAnnotations.TokensAnnotation;
@@ -30,6 +32,7 @@ import edu.stanford.nlp.util.CoreMap;
 import edu.umd.cloud9.collection.XMLInputFormat;
 import edu.umd.cloud9.collection.wikipedia.WikipediaPage;
 import edu.umd.cloud9.collection.wikipedia.language.EnglishWikipediaPage;
+import scala.Tuple2;
 
 public class LSA {
 
@@ -37,7 +40,7 @@ public class LSA {
 	
 	public static void main(String[] args) {
 		//初始化SparkConf
-		SparkConf sc = new SparkConf().setMaster("local").setAppName("AnomalyDetectionInNetworkTraffic");
+		SparkConf sc = new SparkConf().setMaster("local").setAppName("Wiki LSA");
 		System.setProperty("hadoop.home.dir", "D:/Tools/hadoop-2.6.4");
 		JavaSparkContext jsc = new JavaSparkContext(sc);
 
@@ -51,20 +54,45 @@ public class LSA {
 //		JavaRDD<String> plainText = rawXmls.filter(x -> { return x != null; }).flatMap(LSA::wikiXmlToPlainText);
 //		JavaRDD<Tuple2<String, String>> plainText = rawXmls.flatMap(LSA::wikiXmlToPlainText);
 		JavaRDD<Page> plainText = rawXmls.flatMap(LSA::wikiXmlToPlainText);
-		plainText.foreach(x -> System.out.println(x));
+//		plainText.foreach(x -> System.out.println(x));
 		
 		//词形归并
 		HashSet<String> stopWords = jsc.broadcast(loadStopWords("/stopwords.txt")).value();
-		JavaRDD<String> lemmatized = plainText.mapPartitions(iter -> {
+		JavaRDD<Lemmas> lemmatized = plainText.mapPartitions(iter -> {
 			StanfordCoreNLP pipeline = createNLPPipeline();
-			return plainTextToLemmas(iter.next().content, stopWords, pipeline);
+//			return plainTextToLemmas(iter.next().content, stopWords, pipeline);
+			ArrayList<Lemmas> lemmasList = new ArrayList<Lemmas>();
+			lemmasList.add(new Lemmas(iter.next().tittle,plainTextToLemmas(iter.next().content, stopWords, pipeline)));
+			return lemmasList;
 		});
 		
-		//TF-IDF
-		lemmatized.map(terms -> {
-			HashMap<String, Integer> termFreqs = new HashMap<String, Integer>();
-		});
+		JavaRDD<Lemmas> filteredLemmatized = lemmatized.filter(x -> x.lemmas.size() > 1);
 		
+		//TF-IDF 1.每个文档的词项频率的映射
+		JavaRDD<Tuple2<String, HashMap<String, Integer>>> docTermFreqs = filteredLemmatized.map(terms -> {
+			String tittle = terms.tittle;
+			ArrayList<String> lemmas = terms.lemmas;
+			HashMap<String, Integer> map = new HashMap<String, Integer>();
+			for (int i = 0; i < lemmas.size(); i++) {
+				String lemma = lemmas.get(i);
+				if (map.containsKey(lemma)) {
+					map.put(lemma, map.get(lemma) + 1);
+				} else {
+					map.put(lemma, 1);
+				}
+			}
+			return new Tuple2<String, HashMap<String, Integer>> (tittle, map);
+		});
+		docTermFreqs.cache();
+		
+		//查看有多少个词项
+		long count = docTermFreqs.flatMap(x -> {
+			return x._2.keySet();
+		}).distinct().count();
+		System.out.println(count);
+		
+		//
+//		docTermFreqs.aggregate(new HashMap<String, Integer>(), seqOp, combOp);
 		jsc.close();
 	}
 	
@@ -106,7 +134,7 @@ public class LSA {
 	public static Boolean isOnlyLetters(String str) {
 		Integer i = 0;
 		while (i < str.length()) {
-			if (Character.isLetter(str.charAt(i))) {
+			if (!Character.isLetter(str.charAt(i))) {
 				return false;
 			}
 			i += 1;

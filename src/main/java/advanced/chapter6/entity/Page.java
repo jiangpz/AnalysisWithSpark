@@ -1,4 +1,4 @@
-package advanced.chapter6;
+package advanced.chapter6.entity;
 
 public class Page {
 	public String tittle;
