@@ -8,8 +8,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.LongWritable;
@@ -18,6 +20,9 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.api.java.function.Function2;
+import org.apache.spark.mllib.linalg.Vector;
+import org.apache.spark.mllib.linalg.Vectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,7 +59,8 @@ public class LSA {
 //		JavaRDD<String> plainText = rawXmls.filter(x -> { return x != null; }).flatMap(LSA::wikiXmlToPlainText);
 //		JavaRDD<Tuple2<String, String>> plainText = rawXmls.flatMap(LSA::wikiXmlToPlainText);
 		JavaRDD<Page> plainText = rawXmls.flatMap(LSA::wikiXmlToPlainText);
-//		plainText.foreach(x -> System.out.println(x));
+//		plainText.foreach(x -> System.out.println(x.tittle));
+//		TODO 读取文件存在错误
 		
 		//词形归并
 		HashSet<String> stopWords = jsc.broadcast(loadStopWords("/stopwords.txt")).value();
@@ -68,7 +74,7 @@ public class LSA {
 		
 		JavaRDD<Lemmas> filteredLemmatized = lemmatized.filter(x -> x.lemmas.size() > 1);
 		
-		//TF-IDF 1.每个文档的词项频率的映射
+		//TF-IDF 1.每个文档的词项频率的映射 （文章名-词项-数量）
 		JavaRDD<Tuple2<String, HashMap<String, Integer>>> docTermFreqs = filteredLemmatized.map(terms -> {
 			String tittle = terms.tittle;
 			ArrayList<String> lemmas = terms.lemmas;
@@ -84,15 +90,58 @@ public class LSA {
 			return new Tuple2<String, HashMap<String, Integer>> (tittle, map);
 		});
 		docTermFreqs.cache();
+		Long numDocs = docTermFreqs.count();
+		System.out.println("文档个数：" + numDocs);
 		
 		//查看有多少个词项
 		long count = docTermFreqs.flatMap(x -> {
 			return x._2.keySet();
 		}).distinct().count();
-		System.out.println(count);
+		System.out.println("词项个数：" + count);
 		
-		//
+		//TF-IDF 2.1 计算文档频率(非分布式方式)
 //		docTermFreqs.aggregate(new HashMap<String, Integer>(), seqOp, combOp);
+		
+		//TF-IDF 2.2 计算文档频率(分布式方式)
+		//文档每出现一个不同的词项，程序就生成一个由词项和数字1 组成的键-值对
+		JavaPairRDD<String, Integer> docFreqs = docTermFreqs.flatMap(x -> x._2.keySet()).mapToPair(y -> {
+			return new Tuple2<String, Integer>(y, 1);
+		}).reduceByKey(new Function2<Integer, Integer, Integer>() {
+			private static final long serialVersionUID = 1L;
+			public Integer call(Integer i1, Integer i2) {
+				return i1 + i2;
+			}
+		});
+//		docFreqs.foreach(x -> System.out.println(x));
+		//DF 前1500个词的文档频率
+		Integer numTerms = 1500;
+		JavaPairRDD<Integer, String> orderingSwap = docFreqs.mapToPair(x -> x.swap()).sortByKey(false);
+		List<Tuple2<Integer, String>> topDocFreqs = orderingSwap.take(numTerms);
+		//IDF
+		JavaPairRDD<String, Double> idfs = docFreqs.mapToPair(x -> {
+			return new Tuple2<String, Double>(x._1, Math.log(numDocs.doubleValue() / x._2));
+		});
+		HashMap<String, Double> bIdfs = new HashMap<String, Double> (idfs.collectAsMap());
+		//为每个词项分配ID
+		JavaPairRDD<String, Long> termIds = idfs.keys().zipWithIndex();
+		Map<String, Long> bTermIds = jsc.broadcast(termIds).value().collectAsMap();
+//		bTermIds.foreach(x -> System.out.println(x));
+
+		//TF-IDF 3.为每个文档建立一个含权重TF-IDF向量，稀疏矩阵
+		JavaRDD<Vector> vecs = docTermFreqs.map(termFreqs -> {
+			Integer docTotalTerms = termFreqs._2.values().stream().reduce((x, y) -> x + y).get();//一个文章中共有多少词
+			
+//			Iterator<Entry<Long, Double>> termScores = termFreqs._2.entrySet().stream().filter(x -> bTermIds.containsKey(x))
+//					.collect(Collectors.toMap(e -> bTermIds.get(e.getKey()),
+//							e -> bIdfs.get(e.getKey()) * termFreqs._2.get(e.getKey()) / docTotalTerms)).entrySet().iterator();
+			
+			List<Tuple2<Integer, Double>> termScores = termFreqs._2.entrySet().stream().filter(x -> bTermIds.containsKey(x)).map(e -> {
+				return new Tuple2<Integer, Double>(bTermIds.get(e.getKey()).intValue(), bIdfs.get(e.getKey()) * termFreqs._2.get(e.getKey()) / docTotalTerms);
+			}).collect(Collectors.toList());
+			
+			return Vectors.sparse(bTermIds.size(), termScores);
+		});
+		
 		jsc.close();
 	}
 	
